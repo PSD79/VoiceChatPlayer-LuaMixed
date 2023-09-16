@@ -1,0 +1,11 @@
+.git/
+audios/
+covers/
+videos/
+thumbnails/
+venv/
+__pycache__/
+*.ini
+*.session
+*.session-journal
+sessions/

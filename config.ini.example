@@ -1,0 +1,14 @@
+[pyrogram]
+api_id = 11111
+api_hash = xxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+[telegram]
+token = 111111111:xxxxxxxxxxxxxxxxxxx
+database_channel = -1000000000000
+
+[admins]
+name = id
+
+[redis]
+url = redis://localhost/0
+
