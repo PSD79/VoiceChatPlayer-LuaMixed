@@ -33,31 +33,34 @@ from radiojavan import RadioJavan
 from redis import Redis
 
 os.makedirs("sessions", exist_ok=True)
+os.makedirs("config_py", exist_ok=True)
 
 config = ConfigParser()
 
 if sys.argv[1:]:
     if sys.argv[1] == "create":
         if sys.argv[2:] and sys.argv[2].isnumeric():
-            BOT_ID = sys.argv[2]
-            if os.path.exists(f"config_{BOT_ID}.ini"):
-                print(f"config_{BOT_ID}.ini already exists.")
+            ID_BOT = sys.argv[2]
+            if os.path.exists(f"config_py/config_{ID_BOT}.ini"):
+                print(f"config_{ID_BOT}.ini already exists.")
                 sys.exit(0)
-            os.system(f"cp config.ini.example config_{BOT_ID}.ini")
-            print(f"config_{BOT_ID}.ini created.")
+            os.system(f"cp config.ini.example config_py/config_{ID_BOT}.ini")
+            print(f"config_{ID_BOT}.ini created.")
             sys.exit(0)
         else:
             sys.exit(0)
     elif sys.argv[1].isnumeric():
-        BOT_ID = sys.argv[1]
-        if not os.path.exists(f"config_{BOT_ID}.ini"):
-            print(f"config_{BOT_ID}.ini not exists.")
+        ID_BOT = sys.argv[1]
+        if not os.path.exists(f"config_py/config_{ID_BOT}.ini"):
+            print(f"config_{ID_BOT}.ini not exists.")
             sys.exit(0)
-        config.read(f"config_{BOT_ID}.ini")
+        config.read(f"config_py/config_{ID_BOT}.ini")
         API_ID = int(config.get("pyrogram", "api_id"))
         API_HASH = config.get("pyrogram", "api_hash")
         BOT_TOKEN = config.get("telegram", "token")
+        BOT_ID = config.get("telegram", "bot_id")
         DATABASE_CHANNEL = int(config.get("telegram", "database_channel"))
+        SUDO_RG = [int(u[1]) for u in config.items("sudorg")]
         SUDO_USERS = [int(u[1]) for u in config.items("admins")]
         REDIS_URL = config.get("redis", "url")
     else:
@@ -65,11 +68,11 @@ if sys.argv[1:]:
 else:
     sys.exit(0)
 
-bot = Client(f"sessions/{BOT_ID}-bot-api", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+bot = Client(f"sessions/{ID_BOT}-bot-api", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 redis = Redis.from_url(REDIS_URL, encoding='utf-8', decode_responses=True)
 logging.basicConfig(level=logging.ERROR, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', filename='./errors.log')
 
-cli = Client(f"sessions/{BOT_ID}-bot-cli", api_id=API_ID, api_hash=API_HASH, in_memory=True, session_string=redis.get(f"{BOT_ID}:SessionString"))
+cli = Client(f"sessions/{ID_BOT}-bot-cli", api_id=API_ID, api_hash=API_HASH, in_memory=True, session_string=redis.get(f"{ID_BOT}:SessionString"))
 pytgcalls = PyTgCalls(cli)
 
 
@@ -281,7 +284,7 @@ def authorized_groups(func):
             chat_id = message.message.chat.id
         else:
             chat_id = message.chat.id
-        if not redis.sismember(f"{BOT_ID}:Groups", chat_id):
+        if not redis.sismember(f"{BOT_ID}botgps", chat_id):
             return False
         return await func(client, message)
     return wrapper
@@ -292,11 +295,22 @@ def authorized_users(func):
     async def wrapper(client, message):
         if isinstance(message, CallbackQuery):
             chat_id = message.message.chat.id
+            if redis.get(f"{BOT_ID}:Limit:{chat_id}:{message.from_user.id}"):
+                message.answer("hhh", show_alert=True)
+            redis.setex(f"{BOT_ID}:Limit:{chat_id}:{message.from_user.id}", 2, "true")
         else:
             chat_id = message.chat.id
+        if message.from_user.id in SUDO_RG:
+            return await func(client, message)
         if message.from_user.id in SUDO_USERS:
             return await func(client, message)
-        if redis.sismember(f"{BOT_ID}:Admins:{chat_id}", message.from_user.id):
+        if redis.sismember(f"{BOT_ID}sudo:", message.from_user.id):
+            return await func(client, message)
+        if redis.sismember(f"{BOT_ID}owners:{chat_id}", message.from_user.id):
+            return await func(client, message)
+        if redis.sismember(f"{BOT_ID}owner:{chat_id}", message.from_user.id):
+            return await func(client, message)
+        if redis.sismember(f"{BOT_ID}mods:{chat_id}", message.from_user.id):
             return await func(client, message)
         return False
     return wrapper
@@ -306,9 +320,8 @@ def has_active_call(func):
     async def wrapper(client, message):
         active_calls = [call for call in get_active_calls()]
         if message.chat.id not in active_calls:
-            return await message.reply("🚫 وویس چت فعال در گروه وجود ندارد ❗️")
+            return await message.reply("⚏ ویس چت در گروه فعال نیست ، ویس چت فعال کنید مجدد امتحان کنید !")
         return await func(client, message)
-
     return wrapper
 
 
@@ -525,12 +538,12 @@ async def prepare_player(chat_id):
             InlineKeyboardButton(text="⏩", callback_data="next"),
             InlineKeyboardButton(text=rule_text, callback_data=f"changerule-{rule}"),
         ],
-        [
-            InlineKeyboardButton(text="-30", callback_data="seek-30"),
-            InlineKeyboardButton(text="-10", callback_data="seek-10"),
-            InlineKeyboardButton(text="+10", callback_data="seek+10"),
-            InlineKeyboardButton(text="+30", callback_data="seek+30"),
-        ],
+        #[
+        #    InlineKeyboardButton(text="-30", callback_data="seek-30"),
+        #    InlineKeyboardButton(text="-10", callback_data="seek-10"),
+        #    InlineKeyboardButton(text="+10", callback_data="seek+10"),
+        #    InlineKeyboardButton(text="+30", callback_data="seek+30"),
+        #],
         [
             InlineKeyboardButton(text="پخش مجدد لیست", callback_data=f"playforce-{first}"),
             InlineKeyboardButton(text="پخش مجدد", callback_data=f"playforce-{now_playing}"),
@@ -649,7 +662,7 @@ async def clean_playlist_on_close(client, chat_id):
 ############################### Start Command Manager ###############################
 
 
-@bot.on_message(filters.command("playlist") & filters.group)
+@bot.on_message(filters.regex("^\/(playlist)$") | filters.regex("^(لیست پخش)$") & filters.group)
 @authorized_groups
 @authorized_users
 @has_active_call
@@ -658,10 +671,10 @@ async def show_playlist(client, message):
         return await message.reply("🚫 لیست پخش شما خالی است 🚫")
     await delete_last_player(message.chat.id)
     markup = await prepare_playlist(message.chat.id)
-    await message.reply("🔆 برای پخش موزیک خارج از نوبت روی آن کلیک کنید :", reply_markup=markup)
+    await message.reply("⚏ برای پخش موزیک خارج از نوبت روی آن کلیک کنید :", reply_markup=markup)
 
 
-@bot.on_message(filters.command("pause") & filters.group)
+@bot.on_message(filters.regex("^\/(pause)$") | filters.regex("^(متوقف)$") & filters.group)
 @authorized_groups
 @authorized_users
 @has_active_call
@@ -669,12 +682,12 @@ async def pause(client, message):
     if playlist.status(message.chat.id) == "play":
         await pytgcalls.pause_stream(message.chat.id)
         playlist.pause(message.chat.id)
-        await message.reply("⚠️ پخش زنده متوقف شد ⚠️")
+        await message.reply("⚏ پخش زنده با موفقیت متوقف شد .")
     else:
-        await message.reply("⚠️ پخش زنده متوقف بود ⚠️")
+        await message.reply("⚏ پخش زنده متوقف بود.")
 
 
-@bot.on_message(filters.command("resume") & filters.group)
+@bot.on_message(filters.regex("^\/(resume)$") | filters.regex("^(ادامه)$") & filters.group)
 @authorized_groups
 @authorized_users
 @has_active_call
@@ -682,12 +695,12 @@ async def resume(client, message):
     if playlist.status(message.chat.id) == "pause":
         await pytgcalls.resume_stream(message.chat.id)
         playlist.resume(message.chat.id)
-        await message.reply("⚠️ بخش زنده از سر گرفته شد ⚠️")
+        await message.reply("⚏ پخش زنده از سر گرفته شد .")
     else:
-        await message.reply("⚠️ بخش زنده در حال اجرا بود ⚠️")
+        await message.reply("⚏ پخش زنده در حال اجرا بود.")
 
 
-@bot.on_message(filters.command("stop") & filters.group)
+@bot.on_message(filters.regex("^\/(clean list play)$") | filters.regex("^(پاکسازی لیست پخش)$") & filters.group)
 @authorized_groups
 @authorized_users
 @has_active_call
@@ -700,10 +713,10 @@ async def stop(client, message):
             redis.hdel(f"{BOT_ID}:PlayerMessage", message.chat.id)
     await leave_group_call(message.chat.id)
     playlist.clear(message.chat.id)
-    await message.reply("⚠️ پخش زنده متوقف شد ⚠️")
+    await message.reply("⚏ پخش زنده با موفقیت متوقف شد .")
 
 
-@bot.on_message(filters.command("download") & filters.group)
+@bot.on_message(filters.regex("^\/(download)$") | filters.regex("^(دانلود)$") & filters.group)
 @authorized_groups
 @authorized_users
 @has_active_call
@@ -717,8 +730,8 @@ async def download_current(client, message):
             if not redis.hget(f"{BOT_ID}:MessageID", meta_data["id"]):
                 if not redis.sismember(f"{BOT_ID}:Saved", meta_data["id"]):
                     if redis.hget(f"{BOT_ID}:InProgress", meta_data["id"]):
-                        return await bot.send_message(message.chat.id, "⚠️ این فایل در حال اپلود میباشد... ⚠️", reply_to_message_id=message.id)
-                    m = await bot.send_message(message.chat.id, "⚠️ در حال آپلود ⚠️", reply_to_message_id=message.id)
+                        return await bot.send_message(message.chat.id, "⚏ این فایل د رحال آپلود می باشد ...", reply_to_message_id=message.id)
+                    m = await bot.send_message(message.chat.id, "⚏ آپلود فایل آغاز شد ...", reply_to_message_id=message.id)
                     redis.hset(f"{BOT_ID}:InProgress", meta_data["id"], "true")
                     if meta_data["type"] == "video":
                         vid = cv2.VideoCapture(meta_data["path"])
@@ -746,18 +759,18 @@ async def download_current(client, message):
             if "duration" in meta_data.keys():
                 txt += "⏱ زمان : {}".format(playlist.convert_seconds(meta_data['duration']))
             txt += "\nⓂ️ حجم : {:,} مگابایت".format(size)
-            return await bot.send_message(message.chat.id, "{}\n<a href='{}'>لینک دانلود موزیک فعلی</a>".format(txt, meta_data["link"]), parse_mode=ParseMode.HTML)
+            return await bot.send_message(message.chat.id, "{}\n🔗 <a href='{}'>لینک دانلود</a>".format(txt, meta_data["link"]), parse_mode=ParseMode.HTML)
     else:
         return await bot.copy_message(message.chat.id, DATABASE_CHANNEL, int(meta_data["msg_id"]))
 
 
-@bot.on_message(filters.command("next") & filters.group)
+@bot.on_message(filters.regex("^\/(next)$") | filters.regex("^(بعدی)$") & filters.group)
 @authorized_groups
 @authorized_users
 @has_active_call
 async def next(client, message):
     if not playlist.next(message.chat.id):
-        return await message.reply("❗️ آهنگ بعدی در لیست پخش وجود ندارد ❗️")
+        return await message.reply("⚏ موزیک بعدی در لیست پخش وجود ندارد .")
     key = playlist.next(message.chat.id, force=True)
     now = playlist.now(message.chat.id)
     await change_stream(message.chat.id, key)
@@ -769,13 +782,13 @@ async def next(client, message):
     redis.hset(f"{BOT_ID}:PlayerMessage", message.chat.id, player.id)
 
 
-@bot.on_message(filters.command("previous") & filters.group)
+@bot.on_message(filters.regex("^\/(previous)$") | filters.regex("^(قبلی)$") & filters.group)
 @authorized_groups
 @authorized_users
 @has_active_call
 async def previous(client, message):
     if not playlist.previous(message.chat.id):
-        return await message.reply("❗️ آهنگ قبلی در لیست پخش وجود ندارد ❗️")
+        return await message.reply("⚏ موزیک قبلی در لیست پخش وجود ندارد .")
     key = playlist.previous(message.chat.id)
     await change_stream(message.chat.id, key)
     _, _id = playlist.split_key(key)
@@ -786,13 +799,13 @@ async def previous(client, message):
     redis.hset(f"{BOT_ID}:PlayerMessage", message.chat.id, player.id)
 
 
-@bot.on_message(filters.command("player") & filters.group)
+@bot.on_message(filters.regex("^\/(player)$") | filters.regex("^(پلیر)$") & filters.group)
 @authorized_groups
 @authorized_users
 @has_active_call
 async def player(client, message):
     if not playlist.now(message.chat.id):
-        return await message.reply("🚫 وویس چت فعال در گروه وجود ندارد ❗️")
+        return await message.reply("⚏ ویس چت در گروه فعال نیست ، ویس چت فعال کنید مجدد امتحان کنید !")
     await delete_last_player(message.chat.id)
     thumbnail, markup = await prepare_player(message.chat.id)
     played_seconds = await pytgcalls.played_time(message.chat.id)
@@ -806,9 +819,9 @@ async def player(client, message):
 @has_active_call
 async def seek(client, message):
     if not playlist.now(message.chat.id):
-        return await message.reply("🚫 وویس چت فعال در گروه وجود ندارد ❗️")
-    op = re.match(r"^/(seek)\s(\+|\-)\s(\d+)$", message.text, re.M|re.I).group(2)
-    num = int(re.match(r"^/(seek)\s(\+|\-)\s(\d+)$", message.text, re.M|re.I).group(3))
+        return await message.reply("⚏ ویس چت در گروه فعال نیست ، ویس چت فعال کنید مجدد امتحان کنید !")
+    op = re.match(r"^\/(seek)\s(\+|\-)\s(\d+)$", message.text, re.M|re.I).group(2)
+    num = int(re.match(r"^\/(seek)\s(\+|\-)\s(\d+)$", message.text, re.M|re.I).group(3))
     played_seconds = await pytgcalls.played_time(message.chat.id)
     now_playing = playlist.now(message.chat.id)
     meta_data = playlist.extract(now_playing)
@@ -844,7 +857,7 @@ async def seek(client, message):
 # @has_active_call
 # async def volume(client, message):
 #     if not playlist.now(message.chat.id):
-#         return await message.reply("🚫 وویس چت فعال در گروه وجود ندارد ❗️")
+#         return await message.reply("⚏ ویس چت در گروه فعال نیست ، ویس چت فعال کنید مجدد امتحان کنید !")
 #     op = re.match(r"^/(volume)\s(\+|\-)\s(\d+)$", message.text, re.M|re.I).group(2)
 #     num = int(re.match(r"^/(volume)\s(\+|\-)\s(\d+)$", message.text, re.M|re.I).group(3))
 #     current_volume = await get_current_volume(message.chat.id)
@@ -858,12 +871,12 @@ async def seek(client, message):
 
 
 
-@bot.on_message(filters.command("play") & filters.group & filters.reply)
+@bot.on_message(filters.regex("^\/(play)$") | filters.regex("^(پخش)$") & filters.group & filters.reply)
 @authorized_groups
 @authorized_users
 async def play_file(client, message):
     if not message.reply_to_message.audio and not message.reply_to_message.video:
-        return await message.reply("❗️ پیام ریپلای شده موزیک/ویدئو نمیباشد ❗️")
+        return await message.reply("⚏ پیام ریپلای شده موزیک یا ویدیو نمی باشد .")
     if message.reply_to_message.audio:
         thumbnail = None
         artist = message.reply_to_message.audio.performer or ""
@@ -912,11 +925,11 @@ async def play_file(client, message):
     media = eval(f"msg.{item_type}")
     _, ext = os.path.splitext(media.file_name)
     filename = hasher(f"{media.file_name}-{media.file_id}")
-    await pre_msg.edit("📥 در حال دانلود ...")
+    await pre_msg.edit("⁂ در حال دانلود موزیک لطفا صبور باشید...")
     file_path = await msg.download(file_name=f"{filename}{ext}")
     data["path"] = save_to(f"{data['type']}s", file_path)
     playlist.compress(data)
-    await pre_msg.edit("📥 دانلود شد ✅")
+    await pre_msg.edit("⁂ با موفقیت دانلود انجام شد.")
     is_helper_ready = await prepare_helper(message.chat.id, message.id)
     if is_helper_ready:
         active_calls = [call for call in get_active_calls()]
@@ -924,31 +937,31 @@ async def play_file(client, message):
         if message.chat.id in active_calls:
             pos = playlist.get_possition(message.chat.id, _id)
             if not _:
-                return await pre_msg.edit(f"⚠️ این موزیک/ویدئو در جایگاه {pos} از لیست پخش شما قرار دارد ⚠️")
+                return await pre_msg.edit(f"⚏ این موزیک/ویدئو در جایگاه {pos} از لیست پخش شما قرار دارد .")
             await pre_msg.delete()
-            return await message.reply_photo(data["thumbnail"], caption=f"✅ موزیک/ویدئو مورد نظر در جایگاه {pos} لیست پخش اضافه شد ✅")
+            return await message.reply_photo(data["thumbnail"], caption=f"⚏ این موزیک/ویدئو در جایگاه {pos} از لیست پخش شما قرار گرفت .")
         else:
             stream = AudioPiped(data["path"], MediumQualityAudio())
             if data["type"] == "video":
                 stream = AudioVideoPiped(data["path"], MediumQualityAudio(), MediumQualityVideo())
             try:
                 if len(active_calls) < pytgcalls.get_max_voice_chat():
-                    await join_group_call(message.chat.id, stream)
+                    await pytgcalls.join_group_call(message.chat.id, stream, stream_type=StreamType().pulse_stream)
                     playlist.play(message.chat.id, _id)
                     playlist.set_rule(message.chat.id, "queue")
                     await pre_msg.delete()
                     await player(client, message)
                 else:
-                    return await pre_msg.edit("🚫 ربات در حداکثر تعداد وویس چت ممکن عضو شده است و تحت فشار است، لطفا بعدا مجددا تلاش فرمایید 🚫")
+                    return await pre_msg.edit("⚏ ربات در حداکثر تعداد وویس چت ممکن عضو شده است و تحت فشار است، لطفا بعدا مجددا تلاش فرمایید ❗️")
             except tgerrors.NoActiveGroupCall:
-                return await pre_msg.edit("🚫 وویس چت فعال در گروه وجود ندارد ❗️")
+                return await pre_msg.edit("⚏ ویس چت در گروه فعال نیست ، ویس چت فعال کنید مجدد امتحان کنید !")
 
 
-@bot.on_message(filters.regex(r"^/(play)\s+(.*)$") & filters.group)
-@authorized_groups
-@authorized_users
+@bot.on_message(filters.regex(r"^\/?(play|پخش)\s+(.*)$")  & filters.group)
+# @authorized_groups
+# @authorized_users
 async def play_search(client, message):
-    text = re.match(r"^/(play)\s+(.*)$", message.text, re.M|re.I).group(2)
+    text = re.match(r"^\/?(play|پخش)\s+(.*)$", message.text, re.M|re.I).group(2)
     rows = []
     for i in rj.search(text):
         icon = "🎵" if i["type"] == "audio" else "🎬"
@@ -956,9 +969,36 @@ async def play_search(client, message):
         rows.append([InlineKeyboardButton(name, f"song-{i['type']}-{i['id']}")])
     if len(rows) > 0:
         markup = InlineKeyboardMarkup(rows)
-        await message.reply("🔆 از بین نتیج زیر انتخاب کنید :", reply_markup=markup)
+        rows.append([InlineKeyboardButton("❌ بستن", "close")])
+        await message.reply("⚏ از بین نتیج زیر انتخاب کنید :", reply_markup=markup)
     else:
-        await message.reply("☹️ چیزی پیدا نکردم ☹️")
+        await message.reply("⚏ موزیک مد نظر یافت نشد ، لطفا مجدد امتحان کنید .")
+
+
+@bot.on_message(filters.regex(r"^\/?(startagain|از سرگیری)$")  & filters.group)
+# @authorized_groups
+# @authorized_users
+async def startagain(client, message):
+    chat_id = message.chat.id
+    _id = playlist.now(chat_id)
+    key = playlist.get_full_form(chat_id, _id)
+    await change_stream(chat_id, key)
+    thumb, markup = await prepare_player(chat_id)
+    player = await bot.send_photo(chat_id, thumb, caption=playlist.display(_id), reply_markup=markup)
+    redis.hset(f"{BOT_ID}:PlayerMessage", chat_id, player.id)
+
+
+@bot.on_message(filters.regex(r"^\/?(startagainlist|از سرگیری لیست)$")  & filters.group)
+# @authorized_groups
+# @authorized_users
+async def startagainlist(client, message):
+    chat_id = message.chat.id
+    _, _id = playlist.split_key(playlist.get(chat_id)[0])
+    key = playlist.get_full_form(chat_id, _id)
+    await change_stream(chat_id, key)
+    thumb, markup = await prepare_player(chat_id)
+    player = await bot.send_photo(chat_id, thumb, caption=playlist.display(_id), reply_markup=markup)
+    redis.hset(f"{BOT_ID}:PlayerMessage", chat_id, player.id)
 
 
 @bot.on_callback_query(filters.regex(r'^(song)-(audio|video)-(\d+)$'))
@@ -982,7 +1022,7 @@ async def search_select(client, callbackquery):
         result["identifier"] = "radiojavan"
         _, ext = os.path.splitext(result["link"])
         filename = hasher(f"{result['title']}-{result['id']}")
-        await bot.edit_message_text(callbackquery.message.chat.id, callbackquery.message.id, text="📥 در حال دانلود ...")
+        await bot.edit_message_text(callbackquery.message.chat.id, callbackquery.message.id, text="⁂ در حال دانلود موزیک لطفا صبور باشید...")
         file_path = download_url(result["link"], f"{filename}{ext}")
         result["path"] = save_to(f"{result['type']}s", file_path)
         playlist.compress(result)
@@ -991,16 +1031,16 @@ async def search_select(client, callbackquery):
         if callbackquery.message.chat.id in active_calls:
             pos = playlist.get_possition(callbackquery.message.chat.id, _id)
             if not _:
-                return await bot.edit_message_caption(callbackquery.message.chat.id, callbackquery.message.id, caption=f"⚠️ این موزیک/ویدئو در جایگاه {pos} از لیست پخش شما قرار دارد ⚠️")
+                return await bot.edit_message_caption(callbackquery.message.chat.id, callbackquery.message.id, caption=f"⚏ این موزیک/ویدئو در جایگاه {pos} از لیست پخش شما قرار دارد .")
             await bot.delete_messages(callbackquery.message.chat.id, callbackquery.message.id)
-            return await bot.send_photo(callbackquery.message.chat.id, result["thumbnail"], caption=f"✅ موزیک/ویدئو مورد نظر در جایگاه {pos} لیست پخش اضافه شد ✅")
+            return await bot.send_photo(callbackquery.message.chat.id, result["thumbnail"], caption=f"⚏ این موزیک/ویدئو در جایگاه {pos} از لیست پخش شما قرار گرفت .")
         else:
             stream = AudioPiped(result["path"], MediumQualityAudio())
             if result["type"] == "video":
                 stream = AudioVideoPiped(result["path"], MediumQualityAudio(), MediumQualityVideo())
             try:
                 if len(active_calls) < pytgcalls.get_max_voice_chat():
-                    await join_group_call(callbackquery.message.chat.id, stream)
+                    await pytgcalls.join_group_call(callbackquery.message.chat.id, stream, stream_type=StreamType().pulse_stream)
                     playlist.play(callbackquery.message.chat.id, _id)
                     playlist.set_rule(callbackquery.message.chat.id, "queue")
                     await bot.delete_messages(callbackquery.message.chat.id, callbackquery.message.id)
@@ -1008,9 +1048,9 @@ async def search_select(client, callbackquery):
                     player = await bot.send_photo(callbackquery.message.chat.id, result["thumbnail"], caption=playlist.display(playlist.now(callbackquery.message.chat.id)), reply_markup=markup)
                     redis.hset(f"{BOT_ID}:PlayerMessage", callbackquery.message.chat.id, player.id)
                 else:
-                    return await bot.edit_message_caption(callbackquery.message.chat.id, callbackquery.message.id, caption="🚫 ربات در حداکثر تعداد وویس چت ممکن عضو شده است و تحت فشار است، لطفا بعدا مجددا تلاش فرمایید 🚫")
+                    return await bot.edit_message_caption(callbackquery.message.chat.id, callbackquery.message.id, caption="⚏ ربات در حداکثر تعداد وویس چت ممکن عضو شده است و تحت فشار است، لطفا بعدا مجددا تلاش فرمایید ❗️")
             except tgerrors.NoActiveGroupCall:
-                return await bot.edit_message_caption(callbackquery.message.chat.id, callbackquery.message.id, caption="🚫 وویس چت فعال در گروه وجود ندارد ❗️")
+                return await bot.edit_message_caption(callbackquery.message.chat.id, callbackquery.message.id, caption="⚏ ویس چت در گروه فعال نیست ، ویس چت فعال کنید مجدد امتحان کنید !")
 
 
 @bot.on_callback_query(filters.regex(r'^(resume|pause|next|previous|stop|playlist|close|back|download)$'))
@@ -1022,78 +1062,78 @@ async def manage(client, callbackquery):
     message_id = callbackquery.message.id
     if command == "previous":
         if not playlist.previous(chat_id):
-            return await callbackquery.answer("❗️ آهنگ قبلی در لیست پخش وجود ندارد ❗️", show_alert=True)
+            return await callbackquery.answer("⚏ موزیک قبلی در لیست پخش وجود ندارد .", show_alert=True)
         key = playlist.previous(chat_id)
         await change_stream(chat_id, key)
         await edit_player(chat_id, key)
     elif command == "next":
         if not playlist.next(chat_id):
-            return await callbackquery.answer("❗️ آهنگ بعدی در لیست پخش وجود ندارد ❗️", show_alert=True)
+            return await callbackquery.answer("⚏ موزیک بعدی در لیست پخش وجود ندارد .", show_alert=True)
         key = playlist.next(chat_id, force=True)
         await change_stream(chat_id, key)
         await edit_player(chat_id, key)
     elif command == "pause":
         await pytgcalls.pause_stream(chat_id)
         playlist.pause(chat_id)
-        await callbackquery.answer("⚠️ پخش زنده متوقف شد ⚠️", show_alert=True)
+        await callbackquery.answer("⚏ پخش زنده با موفقیت متوقف شد .", show_alert=True)
         thumb, markup = await prepare_player(chat_id)
         await bot.edit_message_reply_markup(chat_id, message_id, markup)
     elif command == "resume":
         await pytgcalls.resume_stream(chat_id)
         playlist.resume(chat_id)
-        await callbackquery.answer("⚠️ بخش زنده از سر گرفته شد ⚠️", show_alert=True)
+        await callbackquery.answer("⚏ پخش زنده از سر گرفته شد .", show_alert=True)
         thumb, markup = await prepare_player(chat_id)
         await bot.edit_message_reply_markup(chat_id, message_id, markup)
     elif command == "stop":
         await delete_last_player(chat_id)
         await leave_group_call(chat_id)
         playlist.clear(chat_id)
-        await bot.send_message(chat_id, "⚠️ پخش زنده متوقف شد ⚠️")
+        await bot.send_message(chat_id, "⚏ پخش زنده با موفقیت متوقف شد .")
     elif command == "close":
         await bot.edit_message_reply_markup(chat_id, message_id, None)
     elif command == "playlist":
         await delete_last_player(chat_id)
         markup = await prepare_playlist(chat_id)
-        await bot.send_message(chat_id, "🔆 برای پخش موزیک خارج از نوبت روی آن کلیک کنید :", reply_markup=markup)
+        await bot.send_message(chat_id, "⚏ برای پخش موزیک خارج از نوبت روی آن کلیک کنید :", reply_markup=markup)
     elif command == "download":
         now_playing = playlist.now(chat_id)
         meta_data = playlist.extract(now_playing)
+        txt = ""
         if meta_data["identifier"] == "radiojavan":
             size = os.stat(meta_data["path"])
             size = size.st_size // (1024 * 1024)
+            if "artist" in meta_data.keys():
+                txt += "🗣 خواننده : {}\n".format(meta_data['artist'])
+            if "title" in meta_data.keys():
+                if meta_data["type"] == "video":
+                    txt += "🎵 نام موزیک ویدئو : {}\n".format(meta_data['title'])
+                else:
+                    txt += "🎵 نام آهنگ : {}\n".format(meta_data['title'])
+            if "duration" in meta_data.keys():
+                txt += "⏱ زمان : {}".format(playlist.convert_seconds(meta_data['duration']))
+            txt += "\nⓂ️ حجم : {:,} مگابایت".format(size)
             if size <= 20:
                 if not redis.hget(f"{BOT_ID}:MessageID", meta_data["id"]):
                     if not redis.sismember(f"{BOT_ID}:Saved", meta_data["id"]):
                         if redis.hget(f"{BOT_ID}:InProgress", meta_data["id"]):
-                            return await callbackquery.answer("⚠️ این فایل در حال اپلود میباشد... ⚠️", show_alert=True)
-                        await callbackquery.answer("⚠️ در حال آپلود ⚠️", show_alert=True)
+                            return await callbackquery.answer("⚏ این فایل د رحال آپلود می باشد ...", show_alert=True)
+                        await callbackquery.answer("⚏ آپلود فایل آغاز شد ...", show_alert=True)
                         redis.hset(f"{BOT_ID}:InProgress", meta_data["id"], "true")
                         _, ext = os.path.splitext(meta_data["path"])
                         if meta_data["type"] == "video":
                             vid = cv2.VideoCapture(meta_data["path"])
                             height = vid.get(cv2.CAP_PROP_FRAME_HEIGHT)
                             width = vid.get(cv2.CAP_PROP_FRAME_WIDTH)
-                            msg = await bot.send_video(DATABASE_CHANNEL, open(meta_data["path"], "rb"), file_name=f"{meta_data['title']}{ext}", height=math.ceil(height), width=math.ceil(width), duration=int(meta_data["duration"]), thumb=open(meta_data["thumbnail"], "rb"))
+                            msg = await bot.send_video(DATABASE_CHANNEL, open(meta_data["path"], "rb"), caption="{}".format(txt), file_name=f"{meta_data['title']}{ext}", height=math.ceil(height), width=math.ceil(width), duration=int(meta_data["duration"]), thumb=open(meta_data["thumbnail"], "rb"))
                         else:
-                            msg = await bot.send_audio(DATABASE_CHANNEL, open(meta_data["path"], "rb"), file_name=f"{meta_data['title']}{ext}", performer=meta_data["artist"], title=meta_data["title"])
+                            msg = await bot.send_audio(DATABASE_CHANNEL, open(meta_data["path"], "rb"), caption="{}".format(txt), file_name=f"{meta_data['title']}{ext}", performer=meta_data["artist"], title=meta_data["title"])
                         redis.hdel(f"{BOT_ID}:InProgress", meta_data["id"])
                         redis.sadd(f"{BOT_ID}:Saved", meta_data["id"])
                         redis.hset(f"{BOT_ID}:MessageID", meta_data["id"], msg.id)
                 msg_id = redis.hget(f"{BOT_ID}:MessageID", meta_data["id"])
                 return await bot.copy_message(callbackquery.message.chat.id, DATABASE_CHANNEL, int(msg_id))
             else:
-                txt = ""
-                if "artist" in meta_data.keys():
-                    txt += "🗣 خواننده : {}\n".format(meta_data['artist'])
-                if "title" in meta_data.keys():
-                    if meta_data["type"] == "video":
-                        txt += "🎵 نام موزیک ویدئو : {}\n".format(meta_data['title'])
-                    else:
-                        txt += "🎵 نام آهنگ : {}\n".format(meta_data['title'])
-                if "duration" in meta_data.keys():
-                    txt += "⏱ زمان : {}".format(playlist.convert_seconds(meta_data['duration']))
-                txt += "\nⓂ️ حجم : {:,} مگابایت".format(size)
-                return await bot.send_message(callbackquery.message.chat.id, "{}\n<a href='{}'>لینک دانلود موزیک فعلی</a>".format(txt, meta_data["link"]), parse_mode=ParseMode.HTML)
+                return await bot.send_message(callbackquery.message.chat.id, "{}\n🔗 <a href='{}'>لینک دانلود</a>".format(txt, meta_data["link"]), parse_mode=ParseMode.HTML)
         else:
             return await bot.copy_message(callbackquery.message.chat.id, DATABASE_CHANNEL, int(meta_data["msg_id"]))
     elif command == "back":
@@ -1215,13 +1255,14 @@ async def seek_cb(client, callbackquery):
 ############################### End Command Manager ###############################
 
 async def main():
-    async with Client(f"{BOT_ID}-bot-cli", api_id=API_ID, api_hash=API_HASH, in_memory=True) as app:
+    async with Client(f"{ID_BOT}-bot-cli", api_id=API_ID, api_hash=API_HASH, in_memory=True) as app:
         session_string = await app.export_session_string()
-        redis.set(f"{BOT_ID}:SessionString", session_string)
-        print(f"{Fore.GREEN}Logged In Successfully!\nrun : ./start.sh{Fore.RESET}")
+        redis.set(f"{ID_BOT}:SessionString", session_string)
+        print(f"{Fore.GREEN}Logged In Successfully!")
+        sys.exit(0)
 
 
-if not redis.get(f"{BOT_ID}:SessionString"):
+if not redis.get(f"{ID_BOT}:SessionString"):
     loop = asyncio.get_event_loop()
     loop.run_until_complete(main())
 
